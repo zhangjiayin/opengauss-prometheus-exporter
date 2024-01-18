@@ -1,0 +1,51 @@
+groups:
+- name: openGauss.rules
+  rules:
+  - alert: DeadlockIncreaseRate
+    annotations:
+      message: 'Has {{ $value }} deadlock on database <{{ $labels.datname }}> in last 1m'
+    expr: idelta(pg_stat_database_deadlocks[1m]) > 0
+    labels:
+      severity: warning
+  - alert: SystemCPUHigh
+    expr: (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m])) by (instance)) * 100 > 90
+    for: 1m
+    labels:
+      severity: alert
+    annotations:
+      message: 'System CPU usage on the node {{ $labels.instance }} is {{ $value }}%'
+      summary: System CPU usage is high
+  - alert: SystemMemoryHigh
+    expr: ((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes ) * 100 > 90
+    for: 1m
+    labels:
+      severity: alert
+    annotations:
+      message: 'System memory usage of {{ $value | humanize }} on {{ $labels.instance }} exceeds 90% of the system total memory. '
+      summary: System Memory usage is high
+  - alert: DbDown
+    expr: pg_up{server='10.72.76.107:25432'} < 1
+    for: 1m
+    labels:
+      severity: alert
+    annotations:
+      message: 'openGauss is Down'
+      summary: database is not running
+  - alert: LowTPS
+    expr: sum(irate(pg_stat_database_xact_commit{instance=~"10.72.76.107:29187"}[5m])) + sum(irate(pg_stat_database_xact_rollback{instance=~"10.72.76.107:29187"}[5m])) < 100
+    for: 1m
+    labels:
+      severity: alert
+    annotations:
+      message: 'openGauss TPS is too low'
+      summary: database low TPS
+  - alert: LowTPS
+    expr: sum(irate(pg_stat_database_xact_commit{instance=~"10.72.76.107:29187"}[5m])) + sum(irate(pg_stat_database_xact_rollback{instance=~"10.72.76.107:29187"}[5m])) < 100
+    for: 1m
+    labels:
+      severity: alert
+    annotations:
+      message: 'openGauss TPS is too low'
+      summary: database low TPS
+
+

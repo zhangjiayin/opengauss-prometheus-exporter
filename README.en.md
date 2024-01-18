@@ -29,69 +29,44 @@ export DATA_SOURCE_NAME="postgresql://login:password@hostname:port/dbname"
 
 To build the docker, run `make docker`.
 
-### Local Connect (Socket)
-
-The running user must match the database operations user
-
-Query the socket file
-
-```sql
-postgres=# show unix_socket_directory;
-unix_socket_directory
------------------------
-/tmp
-(1 row)
-```
-
-Set Env
-```bash
-export PGHOST=/tmp
-export PGPORT=26000
-export PGUSER=omm
-export PGDBNAME=postgres
-or
-export DATA_SOURCE_NAME="host=/tmp port=26000 user=omm dbname=postgres"
-```
-
-
 ### Flags
 
-* `help`
+- `help`
   Show context-sensitive help (also try --help-long and --help-man).
 
-* `web.listen-address`
+- `web.listen-address`
   Address to listen on for web interface and telemetry. Default is `:9187`.
 
-* `web.telemetry-path`
+- `web.telemetry-path`
   Path under which to expose metrics. Default is `/metrics`.
 
-* `disable-settings-metrics`
+- `disable-settings-metrics`
   Use the flag if you don't want to scrape `pg_settings`.
 
-* `auto-discover-databases`
+- `auto-discover-databases`
   Whether to discover the databases on a server dynamically.
 
-* `config`
+- `config`
   Path to a YAML file containing queries to run. Check out [`og_exporter.yaml`](og_exporter_default.yaml)
   for examples of the format.
 
-* `--dry-run`
+- `--dry-run`
   Do not run - print the internal representation of the metric maps. Useful when debugging a custom
   queries file.
 
-* `constantLabels`
+- `constantLabels`
   Labels to set in all metrics. A list of `label=value` pairs, separated by commas.
 
-* `version`
+- `version`
   Show application version.
 
-* `exclude-databases`
+- `exclude-databases`
   A list of databases to remove when autoDiscoverDatabases is enabled.
 
-* `log.level`
+- `log.level`
   Set logging level: one of `debug`, `info`, `warn`, `error`, `fatal`
 
-* `log.format`
+- `log.format`
   Set the log output target and format. e.g. `logger:syslog?appname=bob&local=7` or `logger:stdout?json=true`
   Defaults to `logger:stderr`.
 
@@ -99,26 +74,26 @@ export DATA_SOURCE_NAME="host=/tmp port=26000 user=omm dbname=postgres"
 
 The following environment variables configure the exporter:
 
-* `OG_EXPORTER_URL` `PG_EXPORTER_URL` `DATA_SOURCE_NAME`
+- `DATA_SOURCE_NAME` `PG_EXPORTER_URL`
   the default legacy format. Accepts URI form and key=value form arguments. The
   URI may contain the username and password to connect with.
 
-* `OG_EXPORTER_WEB_LISTEN_ADDRESS`
+- `OG_EXPORTER_WEB_LISTEN_ADDRESS`
   Address to listen on for web interface and telemetry. Default is `:9187`.
 
-* `OG_EXPORTER_WEB_TELEMETRY_PATH`
+- `OG_EXPORTER_WEB_TELEMETRY_PATH`
   Path under which to expose metrics. Default is `/metrics`.
 
-* `OG_EXPORTER_DISABLE_SETTINGS_METRICS`
+- `OG_EXPORTER_DISABLE_SETTINGS_METRICS`
   Use the flag if you don't want to scrape `pg_settings`. Value can be `true` or `false`. Default is `false`.
 
-* `OG_EXPORTER_AUTO_DISCOVER_DATABASES`
+- `OG_EXPORTER_AUTO_DISCOVER_DATABASES`
   Whether to discover the databases on a server dynamically. Value can be `true` or `false`. Default is `false`.
 
-* `OG_EXPORTER_CONSTANT_LABELS`
+- `OG_EXPORTER_CONSTANT_LABELS`
   Labels to set in all metrics. A list of `label=value` pairs, separated by commas.
 
-* `OG_EXPORTER_EXCLUDE_DATABASES`
+- `OG_EXPORTER_EXCLUDE_DATABASES`
   A comma-separated list of databases to remove when autoDiscoverDatabases is enabled. Default is empty string.
 
 Settings set by environment variables starting with `OG_` will be overwritten by the corresponding CLI flag if given.
@@ -126,24 +101,21 @@ Settings set by environment variables starting with `OG_` will be overwritten by
 ### Setting the openGauss server's data source name
 
 The openGauss server's [data source name](http://en.wikipedia.org/wiki/Data_source_name)
-must be set via the `OG_EXPORTER_URL` or `PG_EXPORTER_URL` or `DATA_SOURCE_NAME` environment variable.
-
-Priorities are as follows
-
-`OG_EXPORTER_URL` > `PG_EXPORTER_URL` > `DATA_SOURCE_NAME`
+must be set via the `DATA_SOURCE_NAME` environment variable.
 
 For running it locally on a default Debian/Ubuntu install, this will work (transpose to init script as appropriate):
 
-  DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable" opengauss_exporter
+```bash
+DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql/ sslmode=disable" opengauss_exporter
+```
 
 Also, you can set a list of sources to scrape different instances from the one exporter setup. Just define a comma separated string.
 
-  DATA_SOURCE_NAME="port=5432,port=6432" opengauss_exporter
+```bash
+DATA_SOURCE_NAME="port=5432,port=6432" opengauss_exporter
+```
 
 See the [github.com/lib/pq](http://github.com/lib/pq) module for other ways to format the connection string.
-
-> If you define connection strings for multiple databases, database version consistency is required
-> export DATA_SOURCE_NAME=postgresql://gaussdb:password@127.0.0.1:26000/postgres?sslmode=disable,postgresql://gaussdb:password@127.0.0.1:26001/postgres?sslmode=disable
 
 ### Adding new metrics via a config file
 
@@ -165,7 +137,67 @@ make build
 cd test;sh test.sh ../bin/opengauss_exporter <config_file>
 ```
 
-### OpenGauss
+### not valid UTF-8
+
+prometheus requires that the data must be UTF8 encoded, 
+but the data stored in some monitoring data stores in the database will have mixed encoding, 
+such as pg_stat_activity, there will be multiple encoding scenarios in the query in the view, 
+and the database code under one instance is inconsistent. 
+You can configure `checkUTF8:true` in the metrics
+
+```yaml
+pg_active_slowsql:
+  name: pg_active_slowsql
+  desc: openGauss active slow query
+  query:
+    - name: pg_active_slowsql
+      sql: select datname,usename,client_addr,pid,query_start::text,extract(epoch from (now() - query_start)) as query_runtime,xact_start::text,extract(epoch from(now() - xact_start)) as xact_runtime,state,query from pg_stat_activity where query_start is not null;
+      version: '>=0.0.0'
+      timeout: 1
+      status: enable
+  metrics:
+    - name: datname
+      description: Name of database
+      usage: LABEL
+    - name: usename
+      description: Name of user
+      usage: LABEL
+    - name: client_addr
+      description: Client address
+      usage: LABEL
+    - name: pid
+      description: Client pid
+      usage: LABEL
+    - name: query_start
+      description: Query start time
+      usage: LABEL
+    - name: query_runtime
+      description: Query running time
+      usage: GAUGE
+    - name: xact_start
+      description: Start time of transaction
+      usage: LABEL
+    - name: xact_runtime
+      description: transaction running time
+      usage: LABEL
+    - name: state
+      description: Query state
+      usage: LABEL
+    - name: query
+      description: Query sql
+      usage: LABEL
+      checkUTF8: true
+  status: enable
+  ttl: -1
+  timeout: 1
+  public: true
+```
+
+exporter will query the encoding of all databases, 
+and then find the code of the database according to the `datname` in each monitoring indicator, 
+and decide whether to transcode according to the code
+
+### openGauss
 
 ### Monitor user
 
@@ -175,8 +207,6 @@ grant usage on schema dbe_perf to dbuser_monitor;
 grant select on pg_stat_replication to dbuser_monitor;
 
 ```
-
-·
 
 ### primary and standby
 

@@ -1,0 +1,59 @@
+global:
+  smtp_from: ''
+  smtp_smarthost: ''
+  smtp_auth_username: ''
+  smtp_auth_password: ''
+  smtp_require_tls: false
+  http_config:
+    basic_auth:
+      username: ''
+      password: ''
+    proxy_url: ''
+
+templates:
+- '/opt/bitnami/data/wechat.tmpl'
+
+route:
+  group_by: ['alertname']
+  group_wait: 5s
+  #同一组内警报，等待group_interval时间后，再继续等待repeat_interval时间
+  group_interval: 1m
+  #当group_interval时间到后，再等待repeat_interval时间后，才进行报警
+  repeat_interval: 10m
+  receiver: 'wechat'
+  routes:
+  - receiver: 'Default'
+    match:
+      severity: warning
+
+receivers:
+  - name: Default
+    email_configs:
+    - send_resolved: true
+      to: 
+      html: '{{ template "email.default.html" . }}'
+  - name: 'wechat'
+    wechat_configs:
+    - corp_id: ''
+      agent_id: ''
+      api_secret: ''
+      to_party: '1'
+      to_user: ''
+      to_tag: ''
+      send_resolved: true
+
+inhibit_rules:
+- source_match:
+    severity: critical
+  target_match_re:
+    severity: warning|info
+  equal:
+  - alertname
+- source_match:
+    severity: warning
+  target_match_re:
+    severity: info
+  equal:
+  - alertname
+
+mute_time_intervals: []
