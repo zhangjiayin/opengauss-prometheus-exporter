@@ -1,0 +1,16 @@
+# -*- mode: conf -*-
+
+[Unit]
+Description=Prometheus exporter for openGauss server metrics
+Documentation=https://gitee.com/opengauss/openGauss-prometheus-exporte
+
+After=network.target
+
+[Service]
+EnvironmentFile=-/etc/opengauss_exporter/opengauss_exporter.default
+User=omm
+ExecStart=/usr/bin/opengauss_exporter $OG_EXPORTER_OPTS
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
