@@ -199,3 +199,7 @@ test-coverage: fmt ; $(info $(M) running coverage tests…) @ ## Run coverage te
 	$Q $(GOCOVMERGE) $(COVERAGE_DIR)/coverage/*.cover > $(COVERAGE_PROFILE)
 	$Q $(GO) tool cover -html=$(COVERAGE_PROFILE) -o $(COVERAGE_HTML)
 	$Q $(GOCOV) convert $(COVERAGE_PROFILE) | $(GOCOVXML) > $(COVERAGE_XML)
+
+.PHONY: changelog
+changelog: ; $(info $(M) updating changelog...)	@ ## Run updating changelog
+	$(CHGLOG) --output CHANGELOG.md
