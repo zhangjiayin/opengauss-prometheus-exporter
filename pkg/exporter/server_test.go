@@ -192,7 +192,7 @@ func Test_Server(t *testing.T) {
 		metricName    = "pg_lock"
 		queryInstance = defaultMonList[metricName]
 	)
-
+	
 	_ = queryInstance.Check()
 	t.Run("ServerOpt", func(t *testing.T) {
 		s := &Server{
@@ -204,7 +204,7 @@ func Test_Server(t *testing.T) {
 		assert.Equal(t, prometheus.Labels{
 			"server": "localhost:5432",
 		}, s.labels)
-
+		
 		ServerWithNamespace("a1")(s)
 		assert.Equal(t, "a1", s.namespace)
 		ServerWithDisableSettingsMetrics(false)(s)
@@ -608,12 +608,12 @@ postgres,AccessExclusiveLock,0`))
 			},
 		}
 		err := s.queryMetric(ch, q)
-
+		
 		assert.NoError(t, err)
-
+		
 		// cache 过期
 		time.Sleep(3 * time.Second)
-
+		
 		mock.ExpectQuery("SELECT").WillReturnRows(
 			sqlmock.NewRows([]string{"datname", "size_bytes"}).AddRow("postgres", 1))
 		_ = q.Check()
@@ -674,11 +674,11 @@ postgres,AccessExclusiveLock,0`))
 			t.Error(err)
 		}
 		s.db = db
-
+		
 		queryInstanceMap := map[string]*QueryInstance{
 			"pg_database": pg_database,
 		}
-
+		
 		mock.ExpectQuery("SELECT").WillReturnRows(
 			sqlmock.NewRows([]string{"datname", "size_bytes"}).AddRow("postgres", 1))
 		errs := s.queryMetrics(ch, queryInstanceMap)
@@ -704,7 +704,7 @@ postgres,AccessExclusiveLock,0`))
 		} else {
 			s.SetDBInfoMap(v)
 		}
-
+		
 		metrics, errs, err := s.doCollectMetric(pgActiveSlowsql)
 		assert.Error(t, err)
 		assert.ElementsMatch(t, []error{}, errs)
@@ -712,6 +712,34 @@ postgres,AccessExclusiveLock,0`))
 			fmt.Printf("%#v\n", m)
 		}
 		assert.ElementsMatch(t, []prometheus.Metric{}, metrics)
+	})
+	t.Run("timeout", func(t *testing.T) {
+		db, mock, err = sqlmock.New()
+		if err != nil {
+			t.Error(err)
+		}
+		s.db = db
+		mock.ExpectQuery("SELECT").WillDelayFor(2 * time.Second).WillReturnRows(
+			sqlmock.NewRows([]string{"datname", "size_bytes"}).AddRow("postgres", 1))
+		metric := &QueryInstance{
+			Name: "pg_database",
+			Desc: "OpenGauss Database size",
+			Queries: []*Query{
+				{
+					SQL:     `SELECT datname,size_bytes from dual`,
+					Version: ">=0.0.0",
+					TTL:     10,
+					Timeout: 1.0,
+				},
+			},
+			Metrics: []*Column{
+				{Name: "datname", Usage: LABEL, Desc: "Name of this database"},
+				{Name: "size_bytes", Usage: GAUGE, Desc: "Disk space used by the database"},
+			},
+		}
+		metric.Check()
+		_, _, err := s.doCollectMetric(metric)
+		assert.Error(t, err)
 	})
 }
 

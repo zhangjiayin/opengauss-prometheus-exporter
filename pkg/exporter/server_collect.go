@@ -14,6 +14,24 @@ import (
 	"unicode/utf8"
 )
 
+func (s *Server) execSQL(ctx context.Context, sqlText string) (*sql.Rows, error) {
+	ch := make(chan struct{}, 0)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	go func() {
+		rows, err = s.db.Query(sqlText)
+		ch <- struct{}{}
+	}()
+	select {
+	case <-ch:
+		return rows, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Metric, []error, error) {
 	// 根据版本获取查询sql
 	query := queryInstance.GetQuerySQL(s.lastMapVersion, s.primary)
@@ -21,7 +39,7 @@ func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Met
 		// Return success (no pertinent data)
 		return []prometheus.Metric{}, []error{}, nil
 	}
-
+	
 	// Don't fail on a bad scrape of one metric
 	var (
 		rows       *sql.Rows
@@ -38,19 +56,19 @@ func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Met
 		defer cancel()
 	}
 	log.Debugf("Collect Metric [%s] executing sql %s", queryInstance.Name, query.SQL)
-	rows, err = s.db.QueryContext(ctx, query.SQL)
+	rows, err = s.execSQL(ctx, query.SQL)
 	end := time.Now().Sub(begin).Milliseconds()
-
+	
 	log.Debugf("Collect Metric [%s] executing using time %vms", queryInstance.Name, end)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			log.Errorf("Collect Metric [%s] executing timeout %v", queryInstance.Name, query.TimeoutDuration())
 			err = fmt.Errorf("timeout %v %s", query.TimeoutDuration(), err)
 		} else {
-			log.Errorf("Collect Metric [%s] QueryContext err %s", queryInstance.Name, err)
+			log.Errorf("Collect Metric [%s] executing err %s", queryInstance.Name, err)
 		}
 		return []prometheus.Metric{}, []error{},
-			fmt.Errorf("Collect Metric [%s] QueryContext on database %q err %s ", metricName, s, err)
+			fmt.Errorf("Collect Metric [%s] executing on database %q err %s ", metricName, s, err)
 	}
 	defer rows.Close()
 	var columnNames []string
@@ -59,7 +77,7 @@ func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Met
 		log.Errorf("Collect Metric [%s] executing Columns err %s", queryInstance.Name, err)
 		return []prometheus.Metric{}, []error{}, errors.New(fmt.Sprintln("Error retrieving column list for: ", metricName, err))
 	}
-
+	
 	// Make a lookup map for the column indices
 	var columnIdx = make(map[string]int, len(columnNames))
 	for i, n := range columnNames {
@@ -82,12 +100,12 @@ func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Met
 		list = append(list, columnData)
 	}
 	if err = rows.Err(); err != nil {
-		log.Debugf("Collect Metric [%s] rows.Err() %s", metricName, err)
+		log.Debugf("Collect Metric [%s] fetch data rows.Err() %s", metricName, err)
 		nonfatalErrors = append(nonfatalErrors, err)
 	}
 	end = time.Now().Sub(begin).Milliseconds()
 	log.Debugf("Collect Metric [%s] executing total time %vms", queryInstance.Name, end)
-
+	
 	metrics := make([]prometheus.Metric, 0)
 	for i := range list {
 		metric, errs := s.procRows(queryInstance, columnNames, columnIdx, list[i])
