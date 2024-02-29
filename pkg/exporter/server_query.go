@@ -90,7 +90,7 @@ func (s *Server) queryMetric(ch chan<- prometheus.Metric, queryInstance *QueryIn
 
 	querySQL := queryInstance.GetQuerySQL(s.lastMapVersion, s.primary)
 	if querySQL == nil {
-		log.Errorf("Collect Metric %s not define querySQL for version %s on %s database ", metricName, s.lastMapVersion.String(), s.DBRole())
+		log.Warnf("Collect Metric %s not define querySQL for version %s on %s database ", metricName, s.lastMapVersion.String(), s.DBRole())
 		return nil
 	}
 	if strings.EqualFold(querySQL.Status, statusDisable) {
