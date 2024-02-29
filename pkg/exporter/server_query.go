@@ -123,20 +123,20 @@ func (s *Server) queryMetric(ch chan<- prometheus.Metric, queryInstance *QueryIn
 	if scrapeMetric {
 		metrics, nonFatalErrors, err = s.doCollectMetric(queryInstance)
 	} else {
-		log.Debugf("Collect Metric [%s] use cache", metricName)
+		log.Debugf("Collect Metric [%s] on %s use cache", metricName, s.dbName)
 		metrics, nonFatalErrors = cachedMetric.metrics, cachedMetric.nonFatalErrors
 	}
 
 	// Serious error - a namespace disappeared
 	if err != nil {
 		nonFatalErrors = append(nonFatalErrors, err)
-		log.Errorf("Collect Metric [%s] err %s", metricName, err)
+		log.Errorf("Collect Metric [%s] on %s err %s", metricName, s.dbName, err)
 	}
 	// Non-serious errors - likely version or parsing problems.
 	if len(nonFatalErrors) > 0 {
 		var errText string
 		for _, err := range nonFatalErrors {
-			log.Errorf("Collect Metric [%s] nonFatalErrors err %s", metricName, err)
+			log.Errorf("Collect Metric [%s] %s nonFatalErrors err %s", metricName, s.dbName, err)
 			errText += err.Error()
 		}
 		err = errors.New(errText)
