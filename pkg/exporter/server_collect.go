@@ -14,25 +14,25 @@ import (
 	"unicode/utf8"
 )
 
-func (s *Server) execSQL(ctx context.Context, sqlText string) (*sql.Rows, error) {
-	ch := make(chan struct{}, 0)
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	go func() {
-		rows, err = s.db.Query(sqlText)
-		ch <- struct{}{}
-	}()
-	select {
-	case <-ch:
-		return rows, err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
+// func (s *Server) execSQL(ctx context.Context, conn *sql.Conn, sqlText string) (*sql.Rows, error) {
+// 	ch := make(chan struct{})
+// 	var (
+// 		rows *sql.Rows
+// 		err  error
+// 	)
+// 	go func() {
+// 		rows, err = conn.QueryContext(ctx, sqlText)
+// 		ch <- struct{}{}
+// 	}()
+// 	select {
+// 	case <-ch:
+// 		return rows, err
+// 	case <-ctx.Done():
+// 		return nil, ctx.Err()
+// 	}
+// }
 
-func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Metric, []error, error) {
+func (s *Server) doCollectMetric(queryInstance *QueryInstance, conn *sql.Conn) ([]prometheus.Metric, []error, error) {
 	// 根据版本获取查询sql
 	query := queryInstance.GetQuerySQL(s.lastMapVersion, s.primary)
 	if query == nil {
@@ -56,12 +56,15 @@ func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Met
 		defer cancel()
 	}
 	log.Debugf("Collect Metric [%s] on %s query sql %s ", queryInstance.Name, s.dbName, query.SQL)
-	rows, err = s.execSQL(ctx, query.SQL)
+	// rows, err = s.execSQL(ctx, conn, query.SQL)
+	rows, err = conn.QueryContext(ctx, query.SQL)
 	end := time.Now().Sub(begin).Milliseconds()
 
 	log.Debugf("Collect Metric [%s] on %s query using time %vms", queryInstance.Name, s.dbName, end)
 	if err != nil {
-		if strings.Contains(err.Error(), "context deadline exceeded") {
+		if strings.Contains(err.Error(), "context deadline exceeded") ||
+			strings.Contains(err.Error(), "canceling statement due to user request") ||
+			strings.Contains(err.Error(), "canceling query due to user request") {
 			log.Errorf("Collect Metric [%s] on %s query timeout %v", queryInstance.Name, s.dbName, query.TimeoutDuration())
 			err = fmt.Errorf("timeout %v %s", query.TimeoutDuration(), err)
 		} else {
