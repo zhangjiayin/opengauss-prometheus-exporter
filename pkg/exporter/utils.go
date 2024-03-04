@@ -89,6 +89,7 @@ func parseVersionSem(versionString string) (semver.Version, error) {
 
 var (
 	gaussDBVerRep   = regexp.MustCompile(`(GaussDB|MogDB|Uqbar)\s+Kernel\s+V(\w+)`)
+	gaussDBVerRep2  = regexp.MustCompile(`(GaussDB|MogDB|Uqbar)\s+Kernel\s+(\d+\.\d+.\d+)`)
 	openGaussVerRep = regexp.MustCompile(`(openGauss|MogDB|Uqbar)\s+(\d+\.\d+.\d+)`)
 	vastbaseVerRep  = regexp.MustCompile(`(Vastbase\s+G100)\s+V(\d+\.\d+)`)
 )
@@ -97,6 +98,9 @@ func parseVersion(versionString string) string {
 	versionString = strings.TrimSpace(versionString)
 	if gaussDBVerRep.MatchString(versionString) {
 		return parseGaussDBVersion(gaussDBVerRep.FindStringSubmatch(versionString))
+	}
+	if gaussDBVerRep2.MatchString(versionString) {
+		return parseOpenGaussVersion(gaussDBVerRep2.FindStringSubmatch(versionString))
 	}
 	if openGaussVerRep.MatchString(versionString) {
 		return parseOpenGaussVersion(openGaussVerRep.FindStringSubmatch(versionString))

@@ -282,7 +282,8 @@ func (s *Server) getBaseInfo() error {
 	s.clientEncoding = clientEncoding
 	semanticVersion, err := parseVersionSem(versionString)
 	if err != nil {
-		return fmt.Errorf("Error parsing version string err %s ", err)
+		log.Warnf("Error parsing version string err %s ", err)
+		semanticVersion, err = semver.ParseTolerant("0.0.0")
 	}
 	s.lastMapVersion = semanticVersion
 	return nil

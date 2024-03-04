@@ -236,6 +236,18 @@ func Test_parseVersionSem1(t *testing.T) {
 			wantErr: assert.NoError,
 		},
 		{
+			name: "GaussDB Kernel 505.0.0.SPC0500",
+			args: args{versionString: "gaussdb (GaussDB Kernel 505.0.0.SPC0500 build 9eff8f60) compiled at 2021-09-24 10:10:25 commit 0 last mr   on x86_64-unknown-linux-gnu, compiled by g++ (GCC) 7.3.0, 64-bit"},
+			want: semver.Version{
+				Major: 505,
+				Minor: 0,
+				Patch: 0,
+				Pre:   nil,
+				Build: nil,
+			},
+			wantErr: assert.NoError,
+		},
+		{
 			name: "og_2.0.0",
 			args: args{versionString: "PostgreSQL 9.2.4 (openGauss 2.0.0 build 78689da9) compiled at 2021-03-31 21:04:03 commit 0 last mr   on x86_64-unknown-linux-gnu, compiled by g++ (GCC) 7.3.0, 64-bit"},
 			want: semver.Version{
