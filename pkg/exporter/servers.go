@@ -68,10 +68,8 @@ func (s *Servers) ScrapeDSN(ch chan<- prometheus.Metric) {
 	}
 	// 设置db信息. 根据查询进行关键字段转码
 	server.SetDBInfoMap(dbMaps)
-	if s.autoDiscovery {
-		if len(dbMaps) > 0 {
-			s.discoveryServer(dbMaps)
-		}
+	if s.autoDiscovery && len(dbMaps) > 0 {
+		s.discoveryServer(dbMaps, server.dbName)
 	}
 	s.collStatus = map[string]bool{}
 	for i := range s.servers {
@@ -89,7 +87,7 @@ func (s *Servers) ScrapeDSN(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (s *Servers) discoveryServer(dbMaps map[string]*DBInfo) {
+func (s *Servers) discoveryServer(dbMaps map[string]*DBInfo, currentDBName string) {
 	dsnSetting := make(map[string]string)
 	for k, v := range s.dsnSetting {
 		dsnSetting[k] = v
@@ -99,7 +97,11 @@ func (s *Servers) discoveryServer(dbMaps map[string]*DBInfo) {
 	}
 	newDBNames := s.genDiscoveryDBNames(dbMaps)
 	for _, dbName := range newDBNames {
+		if dbName == currentDBName {
+			continue
+		}
 		dsnSetting[DSNDatabase] = dbName
+		dsnSetting["application_name"] = "opengauss_exporter"
 		dsn := genDSNString(dsnSetting)
 		server, _ := s.GetServer(dsn)
 		// 设置db信息

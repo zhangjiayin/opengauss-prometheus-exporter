@@ -104,6 +104,7 @@ type Server struct {
 	queryScrapeDuration    map[string]float64 // internal query metrics: time spend on executing
 	clientEncoding         string
 	dbInfoMap              map[string]*DBInfo
+	dbName                 string
 }
 
 type DBInfo struct {
@@ -269,12 +270,12 @@ func (s *Server) getBaseInfo() error {
 		return err
 	}
 	var (
-		versionString, clientEncoding string
-		b                             bool
+		versionString, clientEncoding, currentDatabase string
+		b                                              bool
 	)
-	sqlText := "SELECT version(),current_setting('client_encoding'),pg_is_in_recovery()"
+	sqlText := "SELECT version(),current_setting('client_encoding'),pg_is_in_recovery(),current_database()"
 	logrus.Debugf(sqlText)
-	err := s.db.QueryRow(sqlText).Scan(&versionString, &clientEncoding, &b)
+	err := s.db.QueryRow(sqlText).Scan(&versionString, &clientEncoding, &b, &currentDatabase)
 	if err != nil {
 		return err
 	}
@@ -286,6 +287,7 @@ func (s *Server) getBaseInfo() error {
 		semanticVersion, err = semver.ParseTolerant("0.0.0")
 	}
 	s.lastMapVersion = semanticVersion
+	s.dbName = currentDatabase
 	return nil
 }
 
@@ -308,8 +310,8 @@ func (s *Server) ConnectDatabase() error {
 		return err
 	}
 	s.db.SetConnMaxIdleTime(120 * time.Second)
-	// s.db.SetMaxIdleConns(s.parallel)
-	s.db.SetMaxOpenConns(s.parallel)
+	s.db.SetMaxIdleConns(s.parallel)
+	// s.db.SetMaxOpenConns(s.parallel)
 	s.UP = true
 	return nil
 }

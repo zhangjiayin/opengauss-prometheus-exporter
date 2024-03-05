@@ -14,7 +14,25 @@ import (
 	"unicode/utf8"
 )
 
-func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Metric, []error, error) {
+// func (s *Server) execSQL(ctx context.Context, conn *sql.Conn, sqlText string) (*sql.Rows, error) {
+// 	ch := make(chan struct{})
+// 	var (
+// 		rows *sql.Rows
+// 		err  error
+// 	)
+// 	go func() {
+// 		rows, err = conn.QueryContext(ctx, sqlText)
+// 		ch <- struct{}{}
+// 	}()
+// 	select {
+// 	case <-ch:
+// 		return rows, err
+// 	case <-ctx.Done():
+// 		return nil, ctx.Err()
+// 	}
+// }
+
+func (s *Server) doCollectMetric(queryInstance *QueryInstance, conn *sql.Conn) ([]prometheus.Metric, []error, error) {
 	// 根据版本获取查询sql
 	query := queryInstance.GetQuerySQL(s.lastMapVersion, s.primary)
 	if query == nil {
@@ -33,31 +51,35 @@ func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Met
 	// TODO disable timeout
 	if query.Timeout > 0 { // if timeout is provided, use context
 		var cancel context.CancelFunc
-		log.Debugf("Collect Metric [%s] executing with time limit: %v", query.Name, query.TimeoutDuration())
+		log.Debugf("Collect Metric [%s] on %s query with time limit: %v", query.Name, s.dbName, query.TimeoutDuration())
 		ctx, cancel = context.WithTimeout(context.Background(), query.TimeoutDuration())
 		defer cancel()
 	}
-	log.Debugf("Collect Metric [%s] executing sql %s", queryInstance.Name, query.SQL)
-	rows, err = s.db.QueryContext(ctx, query.SQL)
+	log.Debugf("Collect Metric [%s] on %s query sql %s ", queryInstance.Name, s.dbName, query.SQL)
+	// rows, err = s.execSQL(ctx, conn, query.SQL)
+	rows, err = conn.QueryContext(ctx, query.SQL)
 	end := time.Now().Sub(begin).Milliseconds()
 
-	log.Debugf("Collect Metric [%s] executing using time %vms", queryInstance.Name, end)
+	log.Debugf("Collect Metric [%s] on %s query using time %vms", queryInstance.Name, s.dbName, end)
 	if err != nil {
-		if strings.Contains(err.Error(), "context deadline exceeded") {
-			log.Errorf("Collect Metric [%s] executing timeout %v", queryInstance.Name, query.TimeoutDuration())
+		if strings.Contains(err.Error(), "context deadline exceeded") ||
+			strings.Contains(err.Error(), "canceling statement due to user request") ||
+			strings.Contains(err.Error(), "canceling query due to user request") {
+			log.Errorf("Collect Metric [%s] on %s query timeout %v", queryInstance.Name, s.dbName, query.TimeoutDuration())
 			err = fmt.Errorf("timeout %v %s", query.TimeoutDuration(), err)
 		} else {
-			log.Errorf("Collect Metric [%s] QueryContext err %s", queryInstance.Name, err)
+			log.Errorf("Collect Metric [%s] on %s query err %s", queryInstance.Name, s.dbName, err)
 		}
 		return []prometheus.Metric{}, []error{},
-			fmt.Errorf("Collect Metric [%s] QueryContext on database %q err %s ", metricName, s, err)
+			fmt.Errorf("Collect Metric [%s] on %s query err %s ", metricName, s.dbName, err)
 	}
 	defer rows.Close()
 	var columnNames []string
 	columnNames, err = rows.Columns()
 	if err != nil {
-		log.Errorf("Collect Metric [%s] executing Columns err %s", queryInstance.Name, err)
-		return []prometheus.Metric{}, []error{}, errors.New(fmt.Sprintln("Error retrieving column list for: ", metricName, err))
+		err := fmt.Errorf("collect Metric [%s] on %s fetch Columns err %s", queryInstance.Name, s.dbName, err)
+		log.Error(err)
+		return []prometheus.Metric{}, []error{}, err
 	}
 
 	// Make a lookup map for the column indices
@@ -75,18 +97,18 @@ func (s *Server) doCollectMetric(queryInstance *QueryInstance) ([]prometheus.Met
 		}
 		err = rows.Scan(scanArgs...)
 		if err != nil {
-			log.Errorf("Collect Metric [%s] executing rows.Scan err %s", queryInstance.Name, err)
+			log.Errorf("Collect Metric [%s] on %s fetch rows.Scan err %s", queryInstance.Name, s.dbName, err)
 			nonfatalErrors = append(nonfatalErrors, err)
 			break
 		}
 		list = append(list, columnData)
 	}
 	if err = rows.Err(); err != nil {
-		log.Debugf("Collect Metric [%s] rows.Err() %s", metricName, err)
+		log.Debugf("Collect Metric [%s] on %s fetch data rows.Err() %s", metricName, s.dbName, err)
 		nonfatalErrors = append(nonfatalErrors, err)
 	}
 	end = time.Now().Sub(begin).Milliseconds()
-	log.Debugf("Collect Metric [%s] executing total time %vms", queryInstance.Name, end)
+	log.Debugf("Collect Metric [%s] on %s fetch total time %vms", queryInstance.Name, s.dbName, end)
 
 	metrics := make([]prometheus.Metric, 0)
 	for i := range list {

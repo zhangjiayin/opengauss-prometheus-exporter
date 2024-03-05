@@ -3,6 +3,7 @@
 package exporter
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"github.com/DATA-DOG/go-sqlmock"
@@ -164,6 +165,20 @@ func Test_dbToString(t *testing.T) {
 	}
 }
 
+func genMockDB(t *testing.T, s *Server) (*sql.Conn, sqlmock.Sqlmock) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Error(err)
+	}
+	s.db = db
+	conn, err := s.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conn, mock
+
+}
+
 func Test_Server(t *testing.T) {
 	var (
 		db  *sql.DB
@@ -284,8 +299,8 @@ omm,UTF8,A`))
 		s.db = db
 		s.UP = true
 		mock.ExpectQuery("SELECT").WillReturnRows(
-			sqlmock.NewRows([]string{"version", "client_encoding", "pg_is_in_recovery"}).AddRow(
-				"PostgreSQL 9.2.4 (openGauss 2.0.0 build 78689da9) compiled at 2021-03-31 21:04:03 commit 0 last mr   on x86_64-unknown-linux-gnu, compiled by g++ (GCC) 7.3.0, 64-bit", "UTF8", false))
+			sqlmock.NewRows([]string{"version", "client_encoding", "pg_is_in_recovery", "Name"}).AddRow(
+				"PostgreSQL 9.2.4 (openGauss 2.0.0 build 78689da9) compiled at 2021-03-31 21:04:03 commit 0 last mr   on x86_64-unknown-linux-gnu, compiled by g++ (GCC) 7.3.0, 64-bit", "UTF8", false, "postgres"))
 		err := s.getBaseInfo()
 		assert.NoError(t, err)
 		assert.Equal(t, "2.0.0", s.lastMapVersion.String())
@@ -293,11 +308,7 @@ omm,UTF8,A`))
 		assert.Equal(t, true, s.primary)
 	})
 	t.Run("doCollectMetric", func(t *testing.T) {
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("SELECT").WillReturnRows(
 			sqlmock.NewRows([]string{"datname", "mode", "count"}).FromCSVString(`postgres,AccessShareLock,4
 omm,RowShareLock,0
@@ -315,17 +326,13 @@ postgres,ShareUpdateExclusiveLock,0
 omm,AccessExclusiveLock,0
 postgres,RowShareLock,0
 postgres,AccessExclusiveLock,0`))
-		metrics, errs, err := s.doCollectMetric(queryInstance)
+		metrics, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, errs, []error{})
 		assert.NotNil(t, metrics)
 	})
 	t.Run("doCollectMetric_NoTimeOut", func(t *testing.T) {
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		queryInstance.Queries[0].Timeout = 0
 		mock.ExpectQuery("SELECT").WillReturnRows(
 			sqlmock.NewRows([]string{"datname", "mode", "count"}).FromCSVString(`postgres,AccessShareLock,4
@@ -344,24 +351,21 @@ postgres,ShareUpdateExclusiveLock,0
 omm,AccessExclusiveLock,0
 postgres,RowShareLock,0
 postgres,AccessExclusiveLock,0`))
-		metrics, errs, err := s.doCollectMetric(queryInstance)
+		metrics, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, errs, []error{})
 		assert.NotNil(t, metrics)
 	})
 	t.Run("doCollectMetric_query_nil", func(t *testing.T) {
-		metrics, errs, err := s.doCollectMetric(&QueryInstance{})
+		conn, _ := genMockDB(t, s)
+		metrics, errs, err := s.doCollectMetric(&QueryInstance{}, conn)
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []error{}, errs)
 		assert.ElementsMatch(t, []prometheus.Metric{}, metrics)
 	})
 	t.Run("doCollectMetric_timeout", func(t *testing.T) {
 		queryInstance.Queries[0].Timeout = 0.1
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("SELECT").WillDelayFor(1 * time.Second).WillReturnRows(
 			sqlmock.NewRows([]string{"datname", "mode", "count"}).FromCSVString(`postgres,AccessShareLock,4
 omm,RowShareLock,0
@@ -379,31 +383,23 @@ postgres,ShareUpdateExclusiveLock,0
 omm,AccessExclusiveLock,0
 postgres,RowShareLock,0
 postgres,AccessExclusiveLock,0`))
-		metrics, errs, err := s.doCollectMetric(queryInstance)
+		metrics, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.Error(t, err)
 		assert.ElementsMatch(t, []error{}, errs)
 		assert.ElementsMatch(t, []prometheus.Metric{}, metrics)
 	})
 	t.Run("doCollectMetric_query_err", func(t *testing.T) {
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("error"))
-		metrics, errs, err := s.doCollectMetric(queryInstance)
+		metrics, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.Error(t, err)
 		assert.ElementsMatch(t, []error{}, errs)
 		assert.ElementsMatch(t, []prometheus.Metric{}, metrics)
 	})
 	t.Run("doCollectMetric_query_context deadline exceeded", func(t *testing.T) {
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("SELECT").WillReturnError(fmt.Errorf("context deadline exceeded"))
-		metrics, errs, err := s.doCollectMetric(queryInstance)
+		metrics, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.Error(t, err)
 		assert.ElementsMatch(t, []error{}, errs)
 		assert.ElementsMatch(t, []prometheus.Metric{}, metrics)
@@ -421,16 +417,12 @@ postgres,AccessExclusiveLock,0`))
 			t.Error(err)
 			return
 		}
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("SELECT").WillDelayFor(1 * time.Second).WillReturnRows(
 			sqlmock.NewRows([]string{"pid", "usesysid", "usename", "application_name", "client_addr", "client_hostname", "client_port", "backend_start", "state", "sender_sent_location",
 				"receiver_write_location", "receiver_flush_location", "receiver_replay_location", "sync_priority", "sync_state", "pg_current_xlog_location", "pg_xlog_location_diff",
 			}).FromCSVString(`140215315789568,10,omm,"WalSender to Standby","192.168.122.92","kvm-yl2",55802,"2021-01-06 14:45:59.944279+08","Streaming","0/331980B8","0/331980B8","0/331980B8","0/331980B8",1,Sync,"0/331980B8",0`))
-		metrics, errs, err := s.doCollectMetric(queryInstance)
+		metrics, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []error{}, errs)
 		for _, m := range metrics {
@@ -460,14 +452,10 @@ postgres,AccessExclusiveLock,0`))
 			t.Error(err)
 			return
 		}
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("select").WillDelayFor(1 * time.Second).WillReturnRows(
 			sqlmock.NewRows([]string{"a1"}).AddRow(16384))
-		_, errs, err := s.doCollectMetric(queryInstance)
+		_, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.NoError(t, err)
 		assert.Equal(t, []error{}, errs)
 	})
@@ -494,14 +482,10 @@ postgres,AccessExclusiveLock,0`))
 			t.Error(err)
 			return
 		}
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("select").WillDelayFor(1 * time.Second).WillReturnRows(
 			sqlmock.NewRows([]string{"a1"}).AddRow("a1"))
-		_, errs, err := s.doCollectMetric(queryInstance)
+		_, errs, err := s.doCollectMetric(queryInstance, conn)
 		assert.NoError(t, err)
 		assert.Equal(t, 0, len(errs))
 	})
@@ -519,7 +503,7 @@ postgres,AccessExclusiveLock,0`))
 			// Primary: true,
 		}
 		ch := make(chan prometheus.Metric)
-		err := s.queryMetric(ch, q)
+		err := s.queryMetric(ch, q, nil)
 		assert.NoError(t, err)
 	})
 	t.Run("queryMetric_query_nil", func(t *testing.T) {
@@ -528,7 +512,7 @@ postgres,AccessExclusiveLock,0`))
 			q  = &QueryInstance{}
 		)
 		q.Queries = nil
-		err := s.queryMetric(ch, q)
+		err := s.queryMetric(ch, q, nil)
 		assert.NoError(t, err)
 	})
 	t.Run("queryMetric_query_disable", func(t *testing.T) {
@@ -538,7 +522,7 @@ postgres,AccessExclusiveLock,0`))
 		)
 		_ = q.Check()
 		q.Queries[0].Status = statusDisable
-		err := s.queryMetric(ch, q)
+		err := s.queryMetric(ch, q, nil)
 		assert.NoError(t, err)
 	})
 	t.Run("queryMetric_query_no_cache", func(t *testing.T) {
@@ -559,16 +543,12 @@ postgres,AccessExclusiveLock,0`))
 				},
 			}
 		)
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
+		conn, mock := genMockDB(t, s)
 		mock.ExpectQuery("SELECT").WillReturnRows(
 			sqlmock.NewRows([]string{"datname", "size_bytes"}).AddRow("postgres", 1))
 		_ = q.Check()
 		s.disableCache = true
-		err := s.queryMetric(ch, q)
+		err = s.queryMetric(ch, q, conn)
 		assert.NoError(t, err)
 	})
 	t.Run("queryMetric_query_cache", func(t *testing.T) {
@@ -590,12 +570,8 @@ postgres,AccessExclusiveLock,0`))
 				},
 			}
 		)
-		db, mock, err = sqlmock.New()
-		if err != nil {
-			t.Error(err)
-		}
-		s.db = db
 		s.disableCache = false
+		conn, mock := genMockDB(t, s)
 		desc := prometheus.NewDesc("datname", fmt.Sprintf("Unknown metric from %s", metricName),
 			queryInstance.LabelNames, s.labels)
 		s.metricCache = map[string]*cachedMetrics{
@@ -607,7 +583,7 @@ postgres,AccessExclusiveLock,0`))
 				lastScrape: time.Now().Add(-8 * time.Second),
 			},
 		}
-		err := s.queryMetric(ch, q)
+		err := s.queryMetric(ch, q, conn)
 
 		assert.NoError(t, err)
 
@@ -618,7 +594,7 @@ postgres,AccessExclusiveLock,0`))
 			sqlmock.NewRows([]string{"datname", "size_bytes"}).AddRow("postgres", 1))
 		_ = q.Check()
 		s.disableCache = true
-		err = s.queryMetric(ch, q)
+		err = s.queryMetric(ch, q, conn)
 		assert.NoError(t, err)
 	})
 	t.Run("queryMetric_standby", func(t *testing.T) {
@@ -641,7 +617,8 @@ postgres,AccessExclusiveLock,0`))
 				},
 			}
 		)
-		err := s.queryMetric(ch, q)
+		conn, _ := genMockDB(t, s)
+		err := s.queryMetric(ch, q, conn)
 		assert.NoError(t, err)
 		assert.Equal(t, 0, len(ch))
 	})
@@ -684,34 +661,30 @@ postgres,AccessExclusiveLock,0`))
 		errs := s.queryMetrics(ch, queryInstanceMap)
 		assert.Equal(t, 0, len(errs))
 	})
-	t.Run("doCollectMetric_utf8_gbk", func(t *testing.T) {
-		oldClientEncoding := s.clientEncoding
-		oldDBInfoMap := s.dbInfoMap
-		defer func() {
-			s.clientEncoding = oldClientEncoding
-			s.dbInfoMap = oldDBInfoMap
-		}()
-		pgActiveSlowsql.Check()
-		s.dsn = "postgres://mogdb:mtkOP@123@127.0.0.1:5438/postgres"
-		if err := s.ConnectDatabase(); err != nil {
-			t.Error(err)
+	t.Run("timeout", func(t *testing.T) {
+		conn, mock := genMockDB(t, s)
+		mock.ExpectQuery("SELECT").WillDelayFor(2 * time.Second).WillReturnRows(
+			sqlmock.NewRows([]string{"datname", "size_bytes"}).AddRow("postgres", 1))
+		conn, err := s.db.Conn(context.Background())
+		metric := &QueryInstance{
+			Name: "pg_database",
+			Desc: "OpenGauss Database size",
+			Queries: []*Query{
+				{
+					SQL:     `SELECT pg_sleep(1)`,
+					Version: ">=0.0.0",
+					TTL:     10,
+					Timeout: 1.0,
+				},
+			},
+			Metrics: []*Column{
+				{Name: "datname", Usage: LABEL, Desc: "Name of this database"},
+				{Name: "size_bytes", Usage: GAUGE, Desc: "Disk space used by the database"},
+			},
 		}
-		if err := s.getBaseInfo(); err != nil {
-			t.Error(err)
-		}
-		if v, err := s.QueryDatabases(); err != nil {
-			t.Error(err)
-		} else {
-			s.SetDBInfoMap(v)
-		}
-
-		metrics, errs, err := s.doCollectMetric(pgActiveSlowsql)
+		metric.Check()
+		_, _, err = s.doCollectMetric(metric, conn)
 		assert.Error(t, err)
-		assert.ElementsMatch(t, []error{}, errs)
-		for _, m := range metrics {
-			fmt.Printf("%#v\n", m)
-		}
-		assert.ElementsMatch(t, []prometheus.Metric{}, metrics)
 	})
 }
 

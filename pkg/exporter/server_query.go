@@ -3,6 +3,8 @@
 package exporter
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -50,35 +52,58 @@ func (s *Server) ScrapeWithMetric(ch chan<- prometheus.Metric, queryMetric map[s
 }
 
 // 查询监控指标. 先判断是否读取缓存. 禁用缓存或者缓存超时,则读取数据库
+// 启动 parallel 个协程,每个协程固定一个conn，监听指标通道
 func (s *Server) queryMetrics(ch chan<- prometheus.Metric, queryMetric map[string]*QueryInstance) map[string]error {
-	metricErrors := &metricError{
-		Errors: map[string]error{},
-		Count:  0,
-	}
-	wg := sync.WaitGroup{}
-	limit := newRateLimit(s.parallel)
-	for _, queryInstance := range queryMetric {
-		metricName := queryInstance.Name
-		wg.Add(1)
-		limit.getToken()
-		go func(queryInst *QueryInstance) {
-			defer wg.Done()
-			defer limit.putToken()
-			err := s.queryMetric(ch, queryInst)
-			if err != nil {
-				// 存在并发写入问题. 改成结构体加锁
-				metricErrors.addError(metricName, err)
-			}
-		}(queryInstance)
 
+	var (
+		parallel     = s.parallel
+		metricChan   = make(chan *QueryInstance, parallel)
+		wg           = sync.WaitGroup{}
+		metricErrors = &metricError{
+			Errors: map[string]error{},
+			Count:  0,
+		}
+	)
+	go func() {
+		for _, metric := range queryMetric {
+			metricChan <- metric
+		}
+		close(metricChan)
+	}()
+	wg.Add(parallel)
+	for i := 0; i < parallel; i++ {
+		go func(workNum int) {
+			defer wg.Done()
+			conn, err := s.db.Conn(context.Background())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			s.startQueryMetricThread(conn, ch, metricChan, metricErrors)
+		}(i)
 	}
 	wg.Wait()
-
 	s.ScrapeErrorCount = metricErrors.Count
 	return metricErrors.Errors
 }
 
-func (s *Server) queryMetric(ch chan<- prometheus.Metric, queryInstance *QueryInstance) error {
+func (s *Server) startQueryMetricThread(conn *sql.Conn, ch chan<- prometheus.Metric, metricChan chan *QueryInstance, metricErrors *metricError) error {
+	for {
+		select {
+		case metric, ok := <-metricChan:
+			if !ok {
+				return nil
+			}
+			err := s.queryMetric(ch, metric, conn)
+			if err != nil {
+				// 存在并发写入问题. 改成结构体加锁
+				metricErrors.addError(metric.Name, err)
+			}
+		}
+	}
+}
+
+func (s *Server) queryMetric(ch chan<- prometheus.Metric, queryInstance *QueryInstance, conn *sql.Conn) error {
 	var (
 		metricName     = queryInstance.Name
 		scrapeMetric   = false // Whether to collect indicators from the database 是否从数据库里采集指标
@@ -90,7 +115,7 @@ func (s *Server) queryMetric(ch chan<- prometheus.Metric, queryInstance *QueryIn
 
 	querySQL := queryInstance.GetQuerySQL(s.lastMapVersion, s.primary)
 	if querySQL == nil {
-		log.Errorf("Collect Metric %s not define querySQL for version %s on %s database ", metricName, s.lastMapVersion.String(), s.DBRole())
+		log.Warnf("Collect Metric %s not define querySQL for version %s on %s database ", metricName, s.lastMapVersion.String(), s.DBRole())
 		return nil
 	}
 	if strings.EqualFold(querySQL.Status, statusDisable) {
@@ -121,22 +146,22 @@ func (s *Server) queryMetric(ch chan<- prometheus.Metric, queryInstance *QueryIn
 		scrapeMetric = true
 	}
 	if scrapeMetric {
-		metrics, nonFatalErrors, err = s.doCollectMetric(queryInstance)
+		metrics, nonFatalErrors, err = s.doCollectMetric(queryInstance, conn)
 	} else {
-		log.Debugf("Collect Metric [%s] use cache", metricName)
+		log.Debugf("Collect Metric [%s] on %s use cache", metricName, s.dbName)
 		metrics, nonFatalErrors = cachedMetric.metrics, cachedMetric.nonFatalErrors
 	}
 
 	// Serious error - a namespace disappeared
 	if err != nil {
 		nonFatalErrors = append(nonFatalErrors, err)
-		log.Errorf("Collect Metric [%s] err %s", metricName, err)
+		log.Errorf("Collect Metric [%s] on %s err %s", metricName, s.dbName, err)
 	}
 	// Non-serious errors - likely version or parsing problems.
 	if len(nonFatalErrors) > 0 {
 		var errText string
 		for _, err := range nonFatalErrors {
-			log.Errorf("Collect Metric [%s] nonFatalErrors err %s", metricName, err)
+			log.Errorf("Collect Metric [%s] %s nonFatalErrors err %s", metricName, s.dbName, err)
 			errText += err.Error()
 		}
 		err = errors.New(errText)
