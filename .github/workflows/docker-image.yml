@@ -29,4 +29,4 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         push: true
-        tags: jiayin/nebula-dashboard:v3.4.0
+        tags: jiayin/opengauss-prometheus-exporter
